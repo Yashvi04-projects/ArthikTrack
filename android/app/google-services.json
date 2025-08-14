@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "104775315070",
-    "project_id": "arthiktrack",
-    "storage_bucket": "arthiktrack.firebasestorage.app"
+    "project_number": "701660032496",
+    "project_id": "arthiktrack-5fbc7",
+    "storage_bucket": "arthiktrack-5fbc7.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:104775315070:android:689075568df8d37393322f",
+        "mobilesdk_app_id": "1:701660032496:android:709f429cff601618ec8135",
         "android_client_info": {
           "package_name": "com.arthiktrack"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBuaYG4TZUe0MrcPGGiGIyVc8fdeW7iv9Y"
+          "current_key": "AIzaSyBuDNtmx8Fu3jTA0UJF24n1caLmZkGGw7Y"
         }
       ],
       "services": {
