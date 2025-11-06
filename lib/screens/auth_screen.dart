@@ -1,7 +1,7 @@
 // lib/screens/auth_screen.dart 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../onboarding_screen.dart';
+import './home_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -94,7 +94,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       
       // Navigate to onboarding/home screen
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
       );
       
     } on FirebaseAuthException catch (e) {

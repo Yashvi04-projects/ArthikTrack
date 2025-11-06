@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_gemini/flutter_gemini.dart';
+import 'dart:convert';
 import '../services/budget_recommendation_service.dart';
 import '../services/firestore_service.dart';
 import '../models/entry.dart';
+import '../models/budget_recommendation.dart';
 
 class AIInsightsScreen extends StatefulWidget {
   const AIInsightsScreen({super.key});
@@ -14,44 +17,127 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   Map<String, BudgetRecommendation> recommendations = {};
   bool isLoading = true;
-  double monthlyIncome = 50000; // Default, should be user input
+  double monthlyIncome = 50000; // Default, can be updated by user
   List<Entry> allEntries = [];
+  String? aiAnalysisSummary; // To store the overall summary from AI
 
   @override
   void initState() {
     super.initState();
+    // Initialize Gemini with your API key
+    // IMPORTANT: Replace with your actual key and use a secure way to store it
+    Gemini.init(apiKey: 'AIzaSyASgr7WX3Op27EGLZFst0Fq5iANzAQPc8I');
     _generateRecommendations();
   }
 
   void _generateRecommendations() async {
     setState(() => isLoading = true);
-    
-    // Get last 3 months data for better AI analysis
+
+    // Fetch historical data
     DateTime now = DateTime.now();
     List<Entry> historicalEntries = [];
-    
-    // Get data from last 3 months
     for (int i = 0; i < 3; i++) {
       DateTime month = DateTime(now.year, now.month - i, 1);
       try {
-        List<Entry> monthEntries = await _firestoreService.getEntriesForMonth(month).first;
+        List<Entry> monthEntries =
+            await _firestoreService.getEntriesForMonth(month).first;
         historicalEntries.addAll(monthEntries);
       } catch (e) {
         print('Error fetching entries for month $month: $e');
       }
     }
-    
+
     setState(() {
       allEntries = historicalEntries;
-      if (historicalEntries.isNotEmpty) {
-        recommendations = BudgetRecommendationService.generateRecommendations(
-          historicalEntries, 
-          monthlyIncome
-        );
-      }
-      isLoading = false;
     });
+
+    if (historicalEntries.isEmpty) {
+      setState(() => isLoading = false);
+      return;
+    }
+
+    // Generate a prompt for the AI
+    String prompt = _composePrompt(historicalEntries, monthlyIncome, 3);
+
+    try {
+      // Call Gemini API
+      final response = await Gemini.instance.text(prompt);
+
+      final String? output = response?.output;
+      
+      if (output != null) {
+
+        final cleanedOutput = output.replaceAll(RegExp(r'``````'), '').trim();
+
+        final aiResponse = json.decode(cleanedOutput);
+
+        // Parse the detailed recommendations and the summary
+        final parsedRecommendations = BudgetRecommendationService.parseFromAIResponse(aiResponse['recommendations']);
+        
+        setState(() {
+          recommendations = parsedRecommendations;
+          aiAnalysisSummary = aiResponse['summary']; // Store the AI summary
+          isLoading = false;
+        });
+
+      } else {
+        throw Exception('No response from Gemini');
+      }
+    } catch (e) {
+      print('Error with Gemini API call: $e');
+      // Fallback to local logic if AI fails
+      setState(() {
+        recommendations = BudgetRecommendationService.generateRecommendations(historicalEntries, monthlyIncome);
+        aiAnalysisSummary = "Could not connect to AI. Showing basic analysis.";
+        isLoading = false;
+      });
+    }
   }
+
+  String _composePrompt(List<Entry> entries, double income, int monthCount) {
+  Map<String, double> categoryTotalSpend = {};
+  for (var entry in entries) {
+    if (entry.type == 'expense') {
+      categoryTotalSpend[entry.category] =
+          (categoryTotalSpend[entry.category] ?? 0) + entry.amount;
+    }
+  }
+
+  Map<String, double> categoryAverageSpend = categoryTotalSpend.map(
+    (key, value) => MapEntry(key, value / monthCount),
+  );
+
+  String spendingData = categoryAverageSpend.entries
+      .map((e) => '"${e.key}": ${e.value.toStringAsFixed(2)}')
+      .join(',\n');
+
+  // --- MODIFIED PROMPT ---
+  return '''
+  You are an API that returns JSON. Do not under any circumstances write any text outside of the JSON object.
+
+  Your entire response must be a single, valid, stringified JSON object.
+  Do not include any conversational text, explanations, or markdown formatting like ```json or ```
+  Your response should begin with `{` and end with `}`.
+
+  Analyze the following financial data for a user in India.
+  - User's monthly income: ₹${income.toStringAsFixed(2)}.
+  - Average monthly spending over the last ${monthCount} month(s):
+  {
+    ${spendingData}
+  }
+
+  Generate a JSON response with two keys: "summary" and "recommendations".
+
+  1.  "summary": A short, encouraging, and insightful overview (2-3 sentences) of the user's spending habits.
+  2.  "recommendations": An array of JSON objects. Each object must contain:
+      - "category" (string)
+      - "riskLevel" (string: "High", "Medium", or "Low")
+      - "averageSpending" (double)
+      - "recommendedAmount" (double)
+      - "tip" (string: a short, actionable tip)
+  ''';
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -75,7 +161,7 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
                 children: [
                   CircularProgressIndicator(color: Color(0xFFD5AC6F)),
                   SizedBox(height: 16),
-                  Text('AI is analyzing your spending patterns...'),
+                  Text('AI is analyzing your spending...'),
                 ],
               ),
             )
@@ -95,6 +181,7 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
     );
   }
 
+  // --- All your other widgets like _buildIncomeSection, _buildOverallInsights, etc. remain the same ---
   Widget _buildIncomeSection() {
     return Card(
       color: const Color(0xFFC5B4A6),
@@ -114,8 +201,8 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
             Row(
               children: [
                 Expanded(
-                  child: Text('₹${monthlyIncome.toStringAsFixed(0)}', 
-                    style: const TextStyle(fontSize: 28, color: Color(0xFF40304D), fontWeight: FontWeight.bold)),
+                  child: Text('₹${monthlyIncome.toStringAsFixed(0)}',
+                      style: const TextStyle(fontSize: 28, color: Color(0xFF40304D), fontWeight: FontWeight.bold)),
                 ),
                 ElevatedButton(
                   onPressed: _updateIncome,
@@ -134,15 +221,9 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
   }
 
   Widget _buildOverallInsights() {
-    int totalRecommendations = recommendations.length;
-    int highRiskCategories = recommendations.values
-        .where((r) => r.riskLevel == 'High').length;
-    
-    double totalExpenses = allEntries
-        .where((e) => e.type == 'expense')
-        .fold(0.0, (sum, e) => sum + e.amount);
-    
-    double savingsRate = ((monthlyIncome - (totalExpenses / 3)) / monthlyIncome * 100);
+    if (recommendations.isEmpty && !isLoading) {
+      return const SizedBox.shrink();
+    }
     
     return Card(
       color: const Color(0xFFD5AC6F),
@@ -159,21 +240,10 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            if (totalRecommendations > 0) ...[
-              Text('📊 $totalRecommendations categories analyzed', style: const TextStyle(color: Color(0xFF40304D))),
-              Text('⚠️ $highRiskCategories high-risk categories', style: const TextStyle(color: Color(0xFF40304D))),
-              Text('💰 ${savingsRate.toStringAsFixed(1)}% savings rate', style: const TextStyle(color: Color(0xFF40304D))),
-              const SizedBox(height: 8),
-              Text(
-                savingsRate > 20 ? '🎉 Excellent savings rate!' : 
-                savingsRate > 10 ? '👍 Good savings rate' : 
-                '⚠️ Try to save more!',
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF40304D))
-              ),
-            ] else ...[
-              const Text('📝 Add more expense entries to get AI insights', style: TextStyle(color: Color(0xFF40304D))),
-              const Text('💡 Start tracking for at least a week for better recommendations', style: TextStyle(color: Color(0xFF40304D))),
-            ]
+            Text(
+              aiAnalysisSummary ?? 'No summary available. Add more entries to get insights.',
+              style: const TextStyle(color: Color(0xFF40304D), fontSize: 14),
+            ),
           ],
         ),
       ),
@@ -190,12 +260,12 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
               Icon(Icons.insights, size: 64, color: Colors.grey[400]),
               const SizedBox(height: 16),
               const Text(
-                'No AI insights yet!',
+                'No AI Insights Yet!',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Add more expense entries across different categories to get personalized AI budget recommendations.',
+                'Add more expense entries to get personalized AI budget recommendations.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
@@ -220,11 +290,14 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
       ],
     );
   }
-
+  
   Widget _buildRecommendationCard(BudgetRecommendation recommendation) {
-    Color riskColor = recommendation.riskLevel == 'High' ? Colors.red :
-                     recommendation.riskLevel == 'Medium' ? Colors.orange : Colors.green;
-    
+    Color riskColor = recommendation.riskLevel == 'High'
+        ? Colors.red.shade700
+        : recommendation.riskLevel == 'Medium'
+            ? Colors.orange.shade700
+            : Colors.green.shade700;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -245,8 +318,8 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    recommendation.riskLevel, 
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)
+                    recommendation.riskLevel,
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -258,9 +331,9 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Current Avg', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                      Text('₹${recommendation.averageSpending.toStringAsFixed(0)}', 
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const Text('Current Avg / month', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      Text('₹${recommendation.averageSpending.toStringAsFixed(0)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     ],
                   ),
                 ),
@@ -270,8 +343,8 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       const Text('AI Recommends', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                      Text('₹${recommendation.recommendedAmount.toStringAsFixed(0)}', 
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
+                      Text('₹${recommendation.recommendedAmount.toStringAsFixed(0)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
                     ],
                   ),
                 ),
@@ -281,12 +354,12 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F5),
+                color: Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.lightbulb, color: Colors.amber, size: 20),
+                  const Icon(Icons.lightbulb_outline, color: Colors.amber, size: 20),
                   const SizedBox(width: 8),
                   Expanded(child: Text(recommendation.tip, style: const TextStyle(fontSize: 13))),
                 ],
@@ -300,24 +373,15 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
 
   IconData _getCategoryIcon(String category) {
     switch (category.toLowerCase()) {
-      case 'food':
-        return Icons.restaurant;
-      case 'transportation':
-        return Icons.directions_car;
-      case 'health':
-        return Icons.medical_services;
-      case 'entertainment':
-        return Icons.movie;
-      case 'shopping':
-        return Icons.shopping_bag;
-      case 'bills':
-        return Icons.receipt;
-      case 'education':
-        return Icons.school;
-      case 'home':
-        return Icons.home;
-      default:
-        return Icons.category;
+      case 'food': return Icons.fastfood;
+      case 'transport': return Icons.directions_car;
+      case 'health': return Icons.healing;
+      case 'entertainment': return Icons.movie_creation;
+      case 'shopping': return Icons.shopping_bag;
+      case 'bills': return Icons.receipt_long;
+      case 'education': return Icons.school;
+      case 'home': return Icons.home;
+      default: return Icons.category;
     }
   }
 
@@ -337,10 +401,7 @@ class _AIInsightsScreenState extends State<AIInsightsScreen> {
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context), 
-              child: const Text('Cancel')
-            ),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
             TextButton(
               onPressed: () {
                 double? newIncome = double.tryParse(controller.text);

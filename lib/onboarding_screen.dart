@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/home_screen.dart';
+import 'screens/auth_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -122,7 +122,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         );
                       } else {
                         Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(builder: (_) => HomeScreen()),
+                          MaterialPageRoute(builder: (_) => AuthScreen()),
                         );
                       }
                     },
